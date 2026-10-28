@@ -85,6 +85,17 @@ channels:
     max_daily_connections: 20
     max_daily_messages: 10
 
+writer:
+  # The sequence: email 1 (short: one observation, one question), then
+  # follow_ups follow-ups (0-5) every follow_up_days days. 0 days keeps
+  # Harvey's own cadence (3, then 4).
+  follow_ups: 5
+  follow_up_days: 7
+  # Your signature, added under every email (cold and replies), e.g.
+  #   signature: "Saludos,\nAna\nAcme Packaging\nwww.acme.example"
+  # Empty: the writer signs with persona.name.
+  signature: ""
+
 usage:
   max_daily_claude_percent: 80
   heartbeat_interval_minutes: 15

@@ -11,7 +11,7 @@ import yaml
 from harvey.textio import read_user_text
 from dotenv import load_dotenv
 from pydantic import (
-    BaseModel, PrivateAttr, TypeAdapter, ValidationError, field_validator, model_validator,
+    BaseModel, Field, PrivateAttr, TypeAdapter, ValidationError, field_validator, model_validator,
 )
 
 from harvey.paths import PROJECT_ROOT
@@ -591,12 +591,23 @@ class BrainConfig(BaseModel):
         return v
 
 
+MAX_FOLLOW_UPS = 5
+
+
 class WriterConfig(BaseModel):
     # Run every draft through one extra editing-only brain call using the
     # Humanizer skill's instructions (~/.claude/skills/humanizer/SKILL.md,
     # or HARVEY_HUMANIZER_SKILL). Off by default: installing the skill for
     # your own Claude Code use never changes what Harvey sends on its own.
     humanizer: bool = False
+    # The sequence after email 1: how many follow-ups (0-5), and the days
+    # between each. 0 days keeps Harvey's own cadence (3, then 4).
+    follow_ups: int = Field(default=2, ge=0, le=MAX_FOLLOW_UPS)
+    follow_up_days: int = Field(default=0, ge=0, le=60)
+    # Signed under every email Harvey sends, cold or reply, above the
+    # compliance footer ("Saludos,\nAna\nAcme\nacme.example"). Empty: the
+    # writer signs with the persona's name.
+    signature: str = ""
 
 
 class HarveyConfig(BaseModel):

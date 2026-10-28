@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timezone
 
 from harvey.brain import Brain
-from harvey.config import HarveyConfig
+from harvey.config import MAX_FOLLOW_UPS, HarveyConfig
 from harvey.humanize import humanize, humanizer_enabled
 from harvey.integrations.mail_provider import NATIVE_PROVIDERS
 from harvey.models.campaign import Campaign, EmailStep
@@ -346,7 +346,7 @@ Requirements:
   question. No pitch, no product name.
 - Write the actual text (no merge variables — you know their name/company).
 - Subject: lowercase, 2-5 words.
-- No postal address, unsubscribe or opt-out line: Harvey adds them when it sends.
+- No postal address, unsubscribe or opt-out line: Harvey adds them when it sends.{self._signature_rule()}
 - Follow every STRICT EMAIL RULE above.{inbox_rule}
 
 Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
@@ -364,7 +364,7 @@ Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
         return {"subject": subject[:120], "body": body[:2000]}
 
     async def _write_sequence(self, prospects: list) -> list[EmailStep]:
-        """Ask the brain to write a 3-email sequence."""
+        """Ask the brain to write the sequence: email 1 plus writer.follow_ups."""
         # Build context about the prospects
         prospect_summary = "\n".join(
             f"- {p.full_name()}, {p.title} at {p.company}"
@@ -418,28 +418,39 @@ Pricing: {self.config.product.pricing}"""
         # note about one person ("met her at the expo") must never reach it.
         prompt += await self._feedback_block([])
 
+        delays = self._delays()
+        total = len(delays)
+        lines = ["- Email 1: Personalized cold observation + one question. Under 75 words. No pitch."]
+        for n in range(2, total + 1):
+            if n == total:
+                lines.append(f"- Email {n}: Break-up email {delays[n - 1]} days after the one before. "
+                             "Under 40 words. Gracious, not guilt-tripping.")
+            else:
+                lines.append(f"- Email {n}: Follow-up {delays[n - 1]} days after the one before. "
+                             "A different angle from every earlier email, one concrete proof "
+                             "point or useful detail. Under 75 words.")
+        example = ",\n".join(
+            f'  {{"step": {n}, "subject": "...", "body": "...", "delay_days": {d}}}'
+            for n, d in enumerate(delays, 1))
+
         prompt += f"""
 
-Write a 3-email cold outreach sequence for prospects like these:
+Write a {total}-email cold outreach sequence for prospects like these:
 {fence(prospect_summary, "sample prospects")}
 
 {UNTRUSTED_RULE}
 
 Requirements:
-- Email 1: Personalized cold observation + one question. Under 75 words. No pitch.
-- Email 2: Follow-up 3 days later. Different angle, one concrete proof point. Under 75 words.
-- Email 3: Break-up email 4 days after that. Under 40 words. Gracious, not guilt-tripping.
+{chr(10).join(lines)}
 {merge_rule}
 - Never be pushy or salesy. Be consultative and value-driven.
 - Subject lines: lowercase, 2-5 words.
-- No postal address, unsubscribe or opt-out line: Harvey adds them when it sends.
+- No postal address, unsubscribe or opt-out line: Harvey adds them when it sends.{self._signature_rule()}
 - Follow every rule in the STRICT EMAIL RULES above. No exceptions.
 
 Return ONLY a JSON array (no markdown fences, no commentary):
 [
-  {{"step": 1, "subject": "...", "body": "...", "delay_days": 0}},
-  {{"step": 2, "subject": "...", "body": "...", "delay_days": 3}},
-  {{"step": 3, "subject": "...", "body": "...", "delay_days": 4}}
+{example}
 ]"""
 
         result = await self.brain.think_json(
@@ -482,7 +493,7 @@ Return ONLY a JSON array (no markdown fences, no commentary):
             return []
 
         steps: list[EmailStep] = []
-        for i, raw in enumerate(result[:5]):  # never accept absurdly long sequences
+        for i, raw in enumerate(result[:1 + MAX_FOLLOW_UPS]):  # never accept absurdly long sequences
             if not isinstance(raw, dict):
                 logger.warning(f"Writer: Skipping non-dict step at index {i}.")
                 continue
@@ -510,9 +521,36 @@ Return ONLY a JSON array (no markdown fences, no commentary):
         if steps and steps[0].delay_days != 0:
             steps[0].delay_days = 0  # first email always sends immediately
 
-        if len(steps) < 3:
-            logger.warning(f"Writer: Expected 3 emails, got {len(steps)}.")
+        # The configured cadence wins over whatever gaps the model wrote, and
+        # a longer sequence than asked for is cut, never sent.
+        delays = self._delays()
+        steps = steps[:len(delays)]
+        if self._writer_setting("follow_up_days", 0):
+            for step, delay in zip(steps, delays):
+                step.delay_days = delay
+
+        if len(steps) < len(delays):
+            logger.warning(f"Writer: Expected {len(delays)} emails, got {len(steps)}.")
         return steps
+
+    def _writer_setting(self, name: str, default):
+        return getattr(getattr(self.config, "writer", None), name, default)
+
+    def _delays(self) -> list[int]:
+        """Days before each email: 0 for email 1, then one gap per follow-up.
+
+        writer.follow_up_days sets every gap; without it Harvey's own
+        cadence is kept (3 days, then 4, then 4 more)."""
+        follow_ups = max(0, min(int(self._writer_setting("follow_ups", 2)), MAX_FOLLOW_UPS))
+        days = int(self._writer_setting("follow_up_days", 0) or 0)
+        gaps = [days] * follow_ups if days else [3] + [4] * max(follow_ups - 1, 0)
+        return [0] + gaps[:follow_ups]
+
+    def _signature_rule(self) -> str:
+        if (self._writer_setting("signature", "") or "").strip():
+            return ("\n- No sign-off, name or signature: Harvey adds the sender's "
+                    "signature when it sends.")
+        return ""
 
     def _group_prospects(self, prospects: list) -> dict[str, list]:
         """Group prospects into campaign batches by industry/title combo."""

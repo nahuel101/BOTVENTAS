@@ -696,11 +696,20 @@ class Sender:
             return body
         return body.rstrip() + "\n\n" + footer
 
+    def _with_signature(self, body: str) -> str:
+        """writer.signature under the text, unless the body already ends with it."""
+        signature = (getattr(getattr(self.config, "writer", None), "signature", "") or "").strip()
+        if not signature or body.rstrip().endswith(signature):
+            return body
+        return body.rstrip() + "\n\n" + signature
+
     def _outgoing_body(self, item: dict) -> str:
-        """The exact body that goes out: cold email gets the footer, replies don't."""
+        """The exact body that goes out: every email is signed; cold email
+        also gets the footer, replies don't."""
+        body = self._with_signature(item["body"])
         if item["kind"] == "sequence":
-            return self._with_footer(item["body"])
-        return item["body"]
+            return self._with_footer(body)
+        return body
 
     async def _follow_up_order(self, item: dict, prospect=None) -> str | tuple[str, str] | None:
         """For a follow-up: "wait" until the email before it went out and its
