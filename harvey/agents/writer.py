@@ -12,8 +12,9 @@ design). Every draft still passes the deterministic pre-send gate.
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from harvey import exclusions
 from harvey.brain import Brain
 from harvey.config import MAX_FOLLOW_UPS, HarveyConfig
 from harvey.humanize import humanize, humanizer_enabled
@@ -37,6 +38,16 @@ PERSON_VAR = re.compile(r"\{\{\s*(first_?name|last_?name|title)\s*\}\}", re.IGNO
 
 # Native mode: one Claude call per prospect for email 1, so batches stay
 # small — the rest of the 'new' pool is picked up on later cycles.
+# Imported sequences (harvey import): the history of what another tool
+# already sent, waiting for the Writer to write the follow-ups still due.
+# "continued:" remembers a sequence already picked up, so a re-import
+# never starts it twice.
+CONTINUATION_KEY = "continuation:"
+CONTINUED_KEY = "continued:"
+CONTINUATIONS_PER_CYCLE = 5
+IMPORT_PROVIDER = "import"
+HISTORY_PLACEHOLDER = "(Seguimiento enviado antes de Harvey; su texto no se importó.)"
+
 NATIVE_BATCH_CAP = 8
 LEGACY_BATCH_CAP = 50
 
@@ -64,6 +75,9 @@ class Writer:
 
         # Load foundational skills for this agent
         self.skills = self.brain.load_skills_for_agent("writer")
+
+        if self.is_native:
+            await self._write_continuations()
 
         # Get prospects that haven't been contacted yet
         new_prospects = await self.state.get_prospects_by_status("new")
@@ -152,6 +166,176 @@ class Writer:
                 f"Writer: Campaign '{batch_name}' created with "
                 f"{len(sequence)} emails for {len(prospects)} prospects."
             )
+
+    # ── Imported sequences: write the follow-ups still due ──
+
+    async def _write_continuations(self):
+        """Continue sequences another tool started (harvey import).
+
+        The emails already sent go into the outbox as sent, on their real
+        dates, so the Sender's own follow-up spacing counts from the last
+        one. Only the follow-ups still due are written, as a continuation of
+        that conversation, never as a first contact."""
+        pending = await self.state.settings_with_prefix(
+            CONTINUATION_KEY, limit=CONTINUATIONS_PER_CYCLE)
+        if not pending:
+            return
+        excluded = await exclusions.load(self.state)
+        delays = self._delays()
+        for key, raw in pending:
+            pid = key[len(CONTINUATION_KEY):]
+            try:
+                info = json.loads(raw)
+                dates = [datetime.fromisoformat(d) for d in info.get("dates") or []]
+            except (ValueError, TypeError):
+                await self.state.delete_setting(key)
+                continue
+            prospect = await self.state.get_prospect(pid)
+            sent = len(dates)
+            done_reason = (
+                "gone" if prospect is None
+                else f"status {prospect.status}" if prospect.status != "contacted"
+                else "no deliverable address" if not prospect.email
+                or (prospect.email_status or "guess") not in WRITABLE_EMAIL_STATUSES
+                else "sequence complete" if not sent or sent >= len(delays)
+                else "excluded company" if exclusions.match(prospect.company, excluded)
+                else "colleague replied" if await self.state.colleague_who_replied(pid)
+                else "")
+            if done_reason:
+                logger.info(f"Writer: no follow-ups to continue for {pid}: {done_reason}.")
+                await self.state.delete_setting(key)
+                continue
+
+            remaining = len(delays) - sent
+            self._no_reply = False
+            follow_ups = await self._write_follow_ups(prospect, info, dates, remaining)
+            if not follow_ups:
+                if getattr(self.brain, "paused_reason", ""):
+                    return       # the provider is down: every one would fail
+                await self._count_failed_continuation(key, prospect)
+                continue
+            await self._stage_continuation(prospect, info, dates, follow_ups, delays)
+            await self.state.delete_setting(key)
+            await self.state.delete_setting(WRITE_ATTEMPTS_KEY + pid)
+
+    async def _count_failed_continuation(self, key: str, prospect):
+        attempts_key = WRITE_ATTEMPTS_KEY + prospect.id
+        try:
+            attempts = int(await self.state.get_setting(attempts_key) or 0) + 1
+        except ValueError:
+            attempts = 1
+        if attempts >= MAX_WRITE_ATTEMPTS:
+            await self.state.delete_setting(key)
+            await self.state.delete_setting(attempts_key)
+            logger.warning(f"Writer: gave up continuing {prospect.email} after "
+                           f"{MAX_WRITE_ATTEMPTS} unusable drafts.")
+        else:
+            await self.state.set_setting(attempts_key, str(attempts))
+
+    async def _write_follow_ups(self, prospect, info: dict, dates: list, remaining: int):
+        sent = len(dates)
+        total = sent + remaining
+        prompt = self.brain.load_prompt(
+            "writer",
+            product_name=self.config.product.name,
+            product_description=self.config.product.description,
+            product_benefits="\n".join(f"- {b}" for b in self.config.product.key_benefits),
+            product_pricing=self.config.product.pricing,
+            persona_name=self.config.persona.name,
+            persona_company=self.config.persona.company,
+            persona_role=self.config.persona.role,
+            persona_tone=self.config.persona.tone,
+        ) or ""
+        if self.skills:
+            prompt += "\n\n" + self.skills
+        prompt += await self._feedback_block([prospect.id])
+        first = f"Subject: {info.get('subject', '')}\n\n{info.get('body', '')}".strip()
+        prompt += f"""
+
+{prospect.full_name()} ({prospect.title} at {prospect.company}) already received
+{sent} email(s) from {self.config.persona.name}: the first one, shown below, and
+{sent - 1} follow-up(s). The last went out on {max(dates):%Y-%m-%d}. No reply yet.
+{fence(first, "first email already sent")}
+
+{UNTRUSTED_RULE}
+
+Write the next {remaining} email(s): emails {sent + 1} to {total} of this sequence.
+- They continue that conversation. Never introduce the company as if for the
+  first time, and never repeat the first email's points or its question.
+- Each takes a different angle, with one concrete proof point or useful detail
+  from the product info. Under 75 words, one question.
+- Email {total} is the last: a break-up, under 40 words, gracious.
+- Write the actual text (no merge variables: you know their name and company).
+- Subject: lowercase, 2-5 words. Never "Re:" or "Fwd:".
+- No postal address, unsubscribe or opt-out line: Harvey adds them when it sends.{self._signature_rule()}
+- Follow every STRICT EMAIL RULE above.
+
+Return ONLY a JSON array of {remaining} objects: [{{"subject": "...", "body": "..."}}]"""
+
+        result = await self.brain.think_json(
+            prompt, session_id="harvey-writer", agent="writer", task="continue_sequence")
+        if isinstance(result, dict):
+            for k in ("emails", "sequence", "steps"):
+                if isinstance(result.get(k), list):
+                    result = result[k]
+                    break
+        if not isinstance(result, list):
+            return []
+        drafts = []
+        for raw in result[:remaining]:
+            if not isinstance(raw, dict):
+                return []
+            subject = str(raw.get("subject") or "").strip()
+            body = str(raw.get("body") or "").strip()
+            if not subject or not body or "{{" in subject + body:
+                return []
+            drafts.append({"subject": subject[:120], "body": body[:2000]})
+        return drafts if len(drafts) == remaining else []
+
+    async def _stage_continuation(self, prospect, info: dict, dates: list,
+                                  follow_ups: list, delays: list):
+        sent = len(dates)
+        history = [
+            EmailStep(step=i, delay_days=delays[i - 1],
+                      subject=info.get("subject") or "(primer correo)" if i == 1 else "(seguimiento)",
+                      body=(info.get("body") or HISTORY_PLACEHOLDER) if i == 1 else HISTORY_PLACEHOLDER)
+            for i in range(1, sent + 1)
+        ]
+        new_steps = [EmailStep(step=sent + n, delay_days=delays[sent + n - 1], **draft)
+                     for n, draft in enumerate(follow_ups, 1)]
+        campaign = Campaign(
+            id="", name=f"continuación: {prospect.company or prospect.email}",
+            channel="email", sequence=history + new_steps,
+            prospect_ids=[prospect.id], status="active",
+        )
+        campaign_id = await self.state.add_campaign(campaign)
+
+        for step, when in zip(history, sorted(dates)):
+            item_id = await self.state.add_outbox_item(
+                prospect_id=prospect.id, to_email=prospect.email, campaign_id=campaign_id,
+                step=step.step, subject=step.subject, body=step.body,
+                send_at=when.isoformat(), status="sent", provider=IMPORT_PROVIDER)
+            if item_id:
+                await self.state.update_outbox_item(item_id, sent_at=when.isoformat())
+
+        await sync_sending_mode(self.config, self.state)
+        require_approval = getattr(self.config.channels.email, "require_approval", True)
+        when = max(dates)
+        for step in new_steps:
+            when = when + timedelta(days=step.delay_days)
+            await self.state.add_outbox_item(
+                prospect_id=prospect.id, to_email=prospect.email, campaign_id=campaign_id,
+                step=step.step, subject=step.subject, body=step.body,
+                send_at=when.isoformat(),
+                status="pending_review" if require_approval else "approved",
+                approved_by="" if require_approval else "autopilot")
+        await self.state.set_setting(CONTINUED_KEY + prospect.id, campaign_id)
+        await self.state.log_action(
+            action_type="continue_sequence", agent="writer",
+            details={"prospect": prospect.email, "campaign_id": campaign_id,
+                     "already_sent": sent, "written": len(new_steps)})
+        logger.info(f"Writer: continued {prospect.email}: {sent} sent before Harvey, "
+                    f"{len(new_steps)} follow-up(s) written.")
 
     async def _count_failed_attempt(self, batch_name: str, prospects: list):
         """Count one unusable sequence against each prospect in the batch.

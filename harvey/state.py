@@ -1423,9 +1423,13 @@ class StateManager:
         return row[0] if row else None
 
     async def count_outbox_sent(self) -> int:
+        """Emails Harvey sent. Imported history (provider 'import': sent
+        before Harvey, by another tool) is left out, so it can't dilute the
+        bounce rate the kill switch watches."""
         async with self._connect() as db:
             async with db.execute(
-                "SELECT COUNT(*) FROM outbox WHERE status = 'sent'"
+                "SELECT COUNT(*) FROM outbox WHERE status = 'sent' "
+                "AND COALESCE(provider, '') != 'import'"
             ) as cursor:
                 return (await cursor.fetchone())[0]
 
@@ -2076,6 +2080,17 @@ class StateManager:
             await db.commit()
             return cursor.rowcount
 
+    async def settings_with_prefix(self, prefix: str, limit: int | None = None) -> list[tuple[str, str]]:
+        """(key, value) for every setting whose key starts with ``prefix``, oldest first."""
+        sql = "SELECT key, value FROM settings WHERE substr(key, 1, ?) = ? ORDER BY updated_at, key"
+        params: tuple = (len(prefix), prefix)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params += (int(limit),)
+        async with self._connect() as db:
+            async with db.execute(sql, params) as cursor:
+                return [(r[0], r[1]) for r in await cursor.fetchall()]
+
     async def delete_setting(self, key: str):
         async with self._connect() as db:
             await db.execute("DELETE FROM settings WHERE key = ?", (key,))
@@ -2638,5 +2653,8 @@ class StateManager:
             # these every cycle — it is free, so it never competes with the
             # Claude budget the rest of the loop is rationing.
             "unprofiled": await self.count_companies_needing_profile(),
+            # Imported sequences whose remaining follow-ups the Writer still
+            # has to write (harvey import → writer.continuations).
+            "pending_continuations": len(await self.settings_with_prefix("continuation:")),
         }
 

@@ -446,6 +446,9 @@ def cmd_import(args):
         if report.personal_emails_dropped:
             print(f"  Personal addresses left out (never cold-emailed): "
                   f"{report.personal_emails_dropped}")
+        if report.continuations:
+            print(f"  Sequences in progress Harvey will continue (follow-ups still due, "
+                  f"for your approval): {report.continuations}")
         print(f"  Researched companies with nobody found yet, left for Scout: "
               f"{report.companies_left_for_prospecting}")
         if report.referrals:

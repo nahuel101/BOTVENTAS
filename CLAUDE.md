@@ -341,6 +341,17 @@ which discovery, Scout and the Sender's last pre-send check all enforce; names
 match by whole words after dropping legal forms ("S.A.C.I.F."). Researched
 companies with nobody found yet stay open for Scout (SalesQL).
 
+Sequences still running in the sheet (`EN_CURSO`, with send dates in
+Fecha_Inicial and FU1-FU5) are **continued, not restarted**: the import stores
+their history (`continuation:<prospect>` setting) and, on a native provider,
+the Writer (`_write_continuations`, a few per cycle) writes only the follow-ups
+still due under `writer.follow_ups`, as a continuation of the first email. The
+emails already sent go into the outbox as `sent` with provider `import` on their
+real dates, so the Sender spaces the next one from the last real send; imported
+history never counts toward the bounce-rate kill switch. Anyone who replied,
+bounced, opted out, or whose colleague replied is skipped; `continued:<prospect>`
+keeps a re-import from starting a sequence twice.
+
 ### Sub-Agents
 - **Scout**: Python does all web searching (DuckDuckGo → Bing → Google → Serper API) and email resolution (pattern-first: cache → scraped mailto → Hunter domain search → default, then verify one candidate via Reoon/ZeroBounce/Hunter/SMTP; catch-alls flagged `risky`). Claude only scores/personalizes found data. Scout also collects **buying signals**: tech stack detected on each company's site (HubSpot, Shopify, Intercom, ~35 tools — zero extra requests) and hiring signals from careers pages. Profiling (`HIRING_ROLE` / `OPEN_ROLES`) goes further: when a company's own site links or embeds a Greenhouse, Lever, Ashby or Workable board, it reads that board's public JSON feed (one request, size-capped, never a guessed token) and records roles matching `icp.hiring_signals` (falls back to `icp.titles`) with department, location, posting date and URL, plus the open-roles count (`harvey/collectors/ats.py`). A board with no matching role records `HIRING_ROLE` = 0, so closed roles stop being current. The `titles` fallback is weak (it lists who you email, not roles that signal buying), so suggest users set `hiring_signals`. With `pip install python-jobspy` (optional), a job-board strategy discovers companies actively hiring for roles in `icp.hiring_signals` (falls back to `icp.titles`) — the strongest in-market signal. Signals land in prospects' personalization notes and boost their score.
 - **Writer**: Generates sequences: email 1 (< 75 words, one observation, one question), then `writer.follow_ups` follow-ups (0-5, default 2; < 75 words, the last a < 40-word break-up) every `writer.follow_up_days` days (0 = Harvey's 3-then-4 cadence). `writer.signature` is added under every email (cold and replies, above the compliance footer) by the Sender; when set, the writer is told not to sign. Strict ban list on AI patterns.

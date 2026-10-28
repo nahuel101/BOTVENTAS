@@ -26,11 +26,14 @@ statuses it sets.
 """
 
 import csv
+import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from harvey import exclusions
+from harvey.agents.writer import CONTINUATION_KEY, CONTINUED_KEY
 from harvey.collectors.discover import normalize_domain
 from harvey.models.company import Company
 from harvey.models.prospect import Prospect
@@ -57,6 +60,8 @@ class ImportReport:
     personal_emails_dropped: int = 0
     companies_left_for_prospecting: int = 0
     referrals: list = field(default_factory=list)
+    # Running sequences whose remaining follow-ups Harvey will write.
+    continuations: int = 0
     warnings: list = field(default_factory=list)
 
     def count(self, status: str):
@@ -168,6 +173,26 @@ def email_status(email: str, salesql_status: str) -> tuple[str, str]:
     return email, "verified"
 
 
+# When each email of a sequence went out: the first, then follow-ups 1-5.
+SENT_DATE_COLUMNS = ("Fecha_Inicial", "FU1", "FU2", "FU3", "FU4", "FU5")
+
+
+def _as_utc(value: str):
+    try:
+        when = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if when.tzinfo is not None:
+        when = when.astimezone(timezone.utc).replace(tzinfo=None)
+    return when
+
+
+def sent_dates(row: dict) -> list:
+    """The send dates an Outreach row records, oldest first (naive UTC)."""
+    dates = [_as_utc(row.get(col, "")) for col in SENT_DATE_COLUMNS if row.get(col)]
+    return sorted(d for d in dates if d is not None)
+
+
 def account_excluded(state: str) -> bool:
     """A customer or a company you said never to contact."""
     state = (state or "").upper()
@@ -266,6 +291,15 @@ async def import_workbook(state, path: str | Path) -> ImportReport:
             "Email": row.get("Email", ""),
         }})
         entry["status"], entry["bounced"] = status, bounced
+        # A sequence still running: what was sent and when, so Harvey can
+        # write the follow-ups still due (see Writer._write_continuations).
+        if row.get("Estado_Secuencia", "").upper().startswith("EN_CURSO"):
+            dates = sent_dates(row)
+            if dates:
+                entry["continuation"] = {
+                    "dates": [d.isoformat() for d in dates],
+                    "subject": row.get("Asunto", ""), "body": row.get("Mensaje", ""),
+                }
         if row.get("Email") and not entry["row"].get("Email"):
             entry["row"]["Email"] = row["Email"]
 
@@ -317,6 +351,12 @@ async def import_workbook(state, path: str | Path) -> ImportReport:
             await state.update_prospect_email(pid, prospect.email, prospect.email_status)
         report.prospects += 1
         report.count(prospect.status)
+        if (entry.get("continuation") and prospect.status == "contacted"
+                and prospect.email_status in ("verified", "risky")
+                and not await state.get_setting(CONTINUED_KEY + pid)):
+            await state.set_setting(CONTINUATION_KEY + pid,
+                                    json.dumps(entry["continuation"], ensure_ascii=False))
+            report.continuations += 1
         if prospect.company_id:
             done.add(prospect.company_id)
 

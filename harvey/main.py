@@ -164,8 +164,11 @@ async def decide_next_action(
         action, reason = "handle_replies", f"{open_conversations} open conversation(s) waiting"
     elif deployable > 0:
         action, reason = "send_campaign", f"{draft_campaigns} draft campaign(s) ready to deploy"
-    elif writable > 0:
-        action, reason = "write_campaign", f"{writable} new prospect(s) with no drafts ready"
+    elif writable > 0 or (summary.get("pending_continuations", 0) or 0) > 0:
+        continuing = summary.get("pending_continuations", 0) or 0
+        action, reason = "write_campaign", (
+            f"{writable} new prospect(s) with no drafts ready" if writable
+            else f"{continuing} imported sequence(s) to continue")
     elif unusable_backlog_notice(summary):
         action, reason = "idle", "a day's worth of prospects with no usable email"
         logger.warning(unusable_backlog_notice(summary))
