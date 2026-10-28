@@ -1422,6 +1422,15 @@ class StateManager:
                 row = await cursor.fetchone()
         return row[0] if row else None
 
+    async def harvey_sent_to(self, prospect_id: str) -> bool:
+        """Has Harvey itself (not an imported history row) emailed them?"""
+        async with self._connect() as db:
+            async with db.execute(
+                "SELECT 1 FROM outbox WHERE prospect_id = ? AND status = 'sent' "
+                "AND COALESCE(provider, '') != 'import' LIMIT 1", (prospect_id,)
+            ) as cursor:
+                return await cursor.fetchone() is not None
+
     async def count_outbox_sent(self) -> int:
         """Emails Harvey sent. Imported history (provider 'import': sent
         before Harvey, by another tool) is left out, so it can't dilute the

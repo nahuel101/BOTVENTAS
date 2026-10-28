@@ -32,6 +32,8 @@ from harvey.untrusted import UNTRUSTED_RULE, fence
 
 logger = logging.getLogger("harvey.handler")
 
+_EMAIL_IN_TEXT = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
 KILL_SWITCH_KEY = "sending_paused"
 BOUNCE_COUNT_KEY = "bounce_count"
 # Kill switch only engages after this many sends (a tiny sample lies).
@@ -836,12 +838,28 @@ class Handler:
             self.provider.confirm_read()
         return complete
 
+    async def _bounced_prospect(self, msg):
+        """The prospect a bounce is about, or None when it isn't Harvey's.
+
+        By the original Message-ID first; else by the failed address the
+        report names, if Harvey itself sent to that person. In a mailbox the
+        team also uses, a bounce of their own mail, or of mail another tool
+        sent before Harvey, is not Harvey's to count."""
+        outbox_item = await self.state.find_outbox_by_message_id(msg.in_reply_to)
+        if outbox_item:
+            return await self.state.get_prospect(outbox_item["prospect_id"])
+        for address in dict.fromkeys(_EMAIL_IN_TEXT.findall(msg.body or "")):
+            address = address.lower().strip(".")
+            if address == (msg.from_email or "").lower():
+                continue
+            prospect = await self.state.get_prospect_by_email(address)
+            if prospect and await self.state.harvey_sent_to(prospect.id):
+                return prospect
+        return None
+
     async def _handle_bounce(self, msg):
         """A bounce is a data bug AND a reputation threat. Fix both."""
-        outbox_item = await self.state.find_outbox_by_message_id(msg.in_reply_to)
-        prospect = None
-        if outbox_item:
-            prospect = await self.state.get_prospect(outbox_item["prospect_id"])
+        prospect = await self._bounced_prospect(msg)
 
         if prospect:
             await self.state.update_prospect_email(
@@ -855,10 +873,15 @@ class Handler:
                 f"cancelled {cancelled} queued email(s)."
             )
         else:
+            # Not counted: the kill switch watches Harvey's own sending.
             logger.warning(
                 f"Handler: bounce received ({msg.subject[:60]}) but couldn't "
-                "match it to a sent email."
+                "match it to an email Harvey sent; not counted."
             )
+            await self.state.log_action(
+                action_type="bounce_unmatched", agent="handler",
+                details={"subject": msg.subject[:120]})
+            return
 
         bounces = await self.state.increment_setting(BOUNCE_COUNT_KEY)
         total_sent = await self.state.count_outbox_sent()

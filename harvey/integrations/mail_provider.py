@@ -51,7 +51,10 @@ BOUNCE_SENDERS = ("mailer-daemon", "postmaster", "mail delivery subsystem")
 BOUNCE_SUBJECTS = (
     "delivery status notification", "undeliverable", "returned mail",
     "delivery failure", "failure notice", "could not be delivered",
-    "delivery incomplete", "address not found",
+    "delivery incomplete", "address not found", "undelivered",
+    # Spanish servers
+    "no se pudo entregar", "no se puede entregar", "no entregado",
+    "error de entrega", "estado de entrega", "devuelto al remitente",
 )
 
 

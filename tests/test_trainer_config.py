@@ -116,16 +116,16 @@ def test_brain_selection_comes_from_the_trainer(tmp_path):
 
 
 def test_first_training_keeps_the_template_settings(tmp_path):
-    # No harvey.local.yaml yet: the settings in harvey.yaml (gmail, the
-    # Precleared block) carry over, and the untrained placeholder persona
-    # is replaced with what training learned.
+    # No harvey.local.yaml yet: the settings in harvey.yaml (the email
+    # provider, the Precleared block) carry over, and the untrained
+    # placeholder persona is replaced with what training learned.
     template = tmp_path / "harvey.yaml"
     shipped = (PROJECT_ROOT / "harvey.yaml").read_text()
     template.write_text(shipped)
     path = tmp_path / "harvey.local.yaml"
     out = write_trained_config(LEARNED, path)
 
-    assert out["channels"]["email"]["provider"] == "gmail"
+    assert out["channels"]["email"]["provider"] == yaml.safe_load(shipped)["channels"]["email"]["provider"]
     assert out["compliance"]["precleared"]["enabled"] is False
     assert out["persona"] == LEARNED["persona"]
     assert out["product"]["offer"]["goal"] == "book_call"

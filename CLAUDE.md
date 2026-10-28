@@ -107,6 +107,14 @@ PRECLEARED_API_KEY=        # cold-email check before first sends (see Step 7)
 TRULYINBOX_API_KEY=        # warmup: set by 'harvey trulyinbox connect' (see Step 2b)
 ```
 
+**A mailbox people also use (SMTP + IMAP):** Harvey reads the inbox read-only
+(`BODY.PEEK`, by date over `IMAP_LOOKBACK_DAYS`, not by the unread flag), so it
+never marks mail read and still sees a reply someone opened first; it files a
+copy of each email it sends in the Sent folder (`IMAP_SENT_FOLDER` or the one the
+server flags `\Sent`); and only bounces it can tie to its own sends (by the
+original Message-ID, or by the failed address of someone Harvey emailed) count
+toward the kill switch.
+
 **Recommended provider — Gmail:** for <50 cold emails/day, a real Google Workspace mailbox on a *dedicated secondary domain* (never the main one) is the most deliverable, cheapest (~$7/mo) option. Set `channels.email.provider: gmail` in harvey.yaml, put the OAuth client id/secret in `.env`, then run `harvey gmail auth` (one-time browser login). SMTP works with any mailbox (AgentMail, Fastmail). Instantly still works as a legacy option.
 
 **Email verification matters:** Harvey learns each company's email *pattern* and verifies ONE candidate rather than guessing (raw SMTP probing is not viable from a locally-running agent — outbound port 25 is usually blocked, and Google Workspace / Microsoft 365 accept everything from an unknown IP). Without a verifier key, found emails are marked `guess` and are **never sent**.
