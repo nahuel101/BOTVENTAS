@@ -90,6 +90,10 @@ REOON_API_KEY=              # 600 free/mo — best free tier
 ZEROBOUNCE_API_KEY=         # 100 free/mo — best for M365/Workspace catch-alls
 HUNTER_API_KEY=             # 50 free/mo + pattern lookup
 
+# --- B2B buyers: LinkedIn profile → work email (needs SERPER_API_KEY too) ---
+SALESQL_API_KEY=            # salesql.com → Settings → API Access
+SALESQL_DAILY_LOOKUPS=25    # credits spent per day, at most
+
 # --- Discovery (optional — the free OpenStreetMap source needs no key) ---
 TINYFISH_API_KEY=                         # free web search (30/min, 500/hr); no rank signals
 DATAFORSEO_LOGIN=  DATAFORSEO_PASSWORD=   # cheapest local-business + SERP data
@@ -308,6 +312,21 @@ Users will come back with questions and tasks. Common ones:
 - **Signals** (`signals.py`, `state.py`): every fact Harvey learns is an OBSERVATION — a row in `observations`, never a column. A new signal needs no migration, re-observing over time is a free time series, and confidence + provenance travel with the fact. The vocabulary in `signal_codes` is governed (a trigger rejects any code not in it) and gated: only `status = 'confirmed'` signals are collected, and only a human sets that. `state.cohort(require, exclude)` does the set intersection in SQL.
 - **Dashboard** (`dashboard.py` + `harvey/web/`): FastAPI JSON API plus plain HTML/CSS/JS served from disk — no build step. Edit `harvey/web/app.css` or `app.js` and reload the page.
 - **DISCOVER** (`collectors/discover.py`): the only stage that spends money, so cost discipline lives in the collector, not the database — every run estimates first, checks a spend cap between batches, reads a kill switch, and flushes observations per batch. Providers are adapters behind one interface (`DiscoveryProvider`); adding one is a small class. Junk filtering matches *patterns*, not a literal blocklist. Entity resolution is the normalised domain, falling back to the provider's `external_id` for businesses with no website.
+
+### SalesQL (B2B buyers)
+With `SALESQL_API_KEY` and `SERPER_API_KEY` set, Scout reaches each company's
+buyer the way a sales rep does by hand: a Google search (Serper, in the
+prospect's country: `gl`/`hl` from `icp.geography`) for
+`site:linkedin.com/in <company> ("<icp.titles>" OR ...)`, then a SalesQL lookup
+of the profile (`harvey/integrations/salesql.py`). Only someone whose current
+job is at the company is kept, and only a work address at the company's own
+domain (SalesQL "Valid" → verified, unconfirmed → risky; personal and
+former-employer addresses are never used). It runs before the team-page scrape
+for every company, at most `SALESQL_SEARCHES_PER_CYCLE` searches a cycle and
+`SALESQL_DAILY_LOOKUPS` paid lookups a day; when the budget is spent, the
+remaining companies wait for the next cycle instead of being marked checked.
+Harvey never opens linkedin.com for this. Find the companies first with
+`harvey discover --provider serper`.
 
 ### Sub-Agents
 - **Scout**: Python does all web searching (DuckDuckGo → Bing → Google → Serper API) and email resolution (pattern-first: cache → scraped mailto → Hunter domain search → default, then verify one candidate via Reoon/ZeroBounce/Hunter/SMTP; catch-alls flagged `risky`). Claude only scores/personalizes found data. Scout also collects **buying signals**: tech stack detected on each company's site (HubSpot, Shopify, Intercom, ~35 tools — zero extra requests) and hiring signals from careers pages. Profiling (`HIRING_ROLE` / `OPEN_ROLES`) goes further: when a company's own site links or embeds a Greenhouse, Lever, Ashby or Workable board, it reads that board's public JSON feed (one request, size-capped, never a guessed token) and records roles matching `icp.hiring_signals` (falls back to `icp.titles`) with department, location, posting date and URL, plus the open-roles count (`harvey/collectors/ats.py`). A board with no matching role records `HIRING_ROLE` = 0, so closed roles stop being current. The `titles` fallback is weak (it lists who you email, not roles that signal buying), so suggest users set `hiring_signals`. With `pip install python-jobspy` (optional), a job-board strategy discovers companies actively hiring for roles in `icp.hiring_signals` (falls back to `icp.titles`) — the strongest in-market signal. Signals land in prospects' personalization notes and boost their score.

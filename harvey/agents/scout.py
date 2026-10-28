@@ -38,13 +38,14 @@ from bs4 import BeautifulSoup
 
 from harvey.brain import Brain
 from harvey.collectors import people as people_mod
-from harvey.collectors.discover import site_name_from_html
+from harvey.collectors.discover import serper_locale, site_name_from_html
 from harvey.collectors.profile import _reads_like_title, looks_like_challenge
 from harvey.config import HarveyConfig, EnvConfig
 from harvey.integrations.email_finder import (
     DEFAULT_PATTERN, SMALL_BUSINESS_PATTERN, find_email, site_email_evidence,
     verify_published_address,
 )
+from harvey.integrations import salesql
 from harvey.integrations.linkedin import LinkedInAutomation
 from harvey.models.company import Company
 from harvey.models.prospect import COMPANY_INBOX_SOURCE, Prospect
@@ -98,6 +99,17 @@ INBOX_PREFERRED = ("owner", "office", "info", "contact", "contactus", "hello",
                    "team", "service", "sales", "estimates", "quotes",
                    "inquiries", "enquiries", "admin", "support")
 MAX_PROSPECTS_PER_CYCLE = 25
+# SalesQL: one Google search per company for its buyer's LinkedIn profile
+# (its own budget, apart from MAX_QUERIES_PER_CYCLE), and at most this many
+# paid lookups per company. The daily lookup cap is SALESQL_DAILY_LOOKUPS.
+SALESQL_SEARCHES_PER_CYCLE = 5
+SALESQL_LOOKUPS_PER_COMPANY = 2
+# Who to look for when icp.titles is empty: the people who buy packaging.
+SALESQL_DEFAULT_ROLES = ("Jefe de Compras", "Gerente de Compras", "Responsable de Compras",
+                         "Comprador", "Purchasing Manager", "Procurement")
+# A current title that says the person buys, whatever icp.titles says.
+_BUYER_TITLE = re.compile(
+    r"compra|comprador|purchas|procure|abastec|sourcing|supply|adquisici", re.I)
 
 # Hunter domain-searches per heartbeat. The monthly budget itself is shared
 # with email-pattern lookups and set by HUNTER_MONTHLY_SEARCHES (see
@@ -162,6 +174,8 @@ class Scout:
         self._seen_domains = set()
         self._site_reads, self._site_evidence, self._own_domains = {}, {}, {}
         self._challenged = set()
+        self._salesql_searches = 0
+        self._salesql_off = False
 
         prospects_found = 0
 
@@ -412,7 +426,9 @@ class Scout:
         resp = await self._fetch(
             "https://google.serper.dev/search",
             method="POST",
-            json_body={"q": query, "num": min(MAX_RESULTS_PER_QUERY, SERPER_MAX_NUM)},
+            json_body={"q": query, "num": min(MAX_RESULTS_PER_QUERY, SERPER_MAX_NUM),
+                       **serper_locale(*(getattr(getattr(getattr(
+                           self, "config", None), "icp", None), "geography", None) or []))},
             headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
             retries=2,
         )
@@ -684,6 +700,12 @@ class Scout:
             domain = (company.get("domain") or "").strip()
             if not domain:
                 continue
+            # With SalesQL on, a company is worth a lookup: leave the rest
+            # unchecked for the next cycle rather than settle for its website.
+            if self._salesql_ready() and not await self._salesql_budget_left():
+                logger.info("Scout: SalesQL budget spent for now; the remaining "
+                            "companies wait for the next cycle.")
+                break
 
             contacts = await self._contacts_from_company(
                 company_id=company["id"],
@@ -1602,7 +1624,13 @@ Respond ONLY with the JSON array."""
         signal_note: str = "",
         source: str = "company_website",
     ) -> list[Prospect]:
-        """Team-page scrape → ICP-matched, email-resolved, deduped prospects."""
+        """SalesQL first when configured, then the team-page scrape →
+        ICP-matched, email-resolved, deduped prospects."""
+        if self._salesql_ready():
+            found = await self._contacts_via_salesql(
+                company_id, domain, company_name, industry, signal_note)
+            if found:
+                return found
         try:
             team_members = await self._scrape_team_page(domain)
         except Exception as e:
@@ -1671,6 +1699,122 @@ Respond ONLY with the JSON array."""
             )
             if inbox:
                 contacts.append(inbox)
+        return contacts
+
+    # ── SalesQL: the buyer's LinkedIn profile → their work email ──
+
+    def _salesql_ready(self) -> bool:
+        """SalesQL needs its key and Serper (Google is how the profile is found)."""
+        env = getattr(self, "env", None)
+        return bool(
+            not getattr(self, "_salesql_off", False)
+            and getattr(env, "salesql_api_key", "")
+            and getattr(env, "serper_api_key", "")
+        )
+
+    async def _salesql_budget_left(self) -> bool:
+        if getattr(self, "_salesql_searches", 0) >= SALESQL_SEARCHES_PER_CYCLE:
+            return False
+        return await salesql.lookups_remaining(self.state) > 0
+
+    def _salesql_roles(self) -> list[str]:
+        titles = [t for t in (self.config.icp.titles or []) if t.strip()]
+        return (titles or list(SALESQL_DEFAULT_ROLES))[:6]
+
+    async def _salesql_profiles(self, company_name: str, domain: str) -> list[str]:
+        """LinkedIn profile URLs Google shows for this company's buyers,
+        those whose result names the company first."""
+        tokens = salesql.name_tokens(company_name)[:3] or [domain.split(".")[0]]
+        roles = " OR ".join(f'"{r}"' for r in self._salesql_roles())
+        query = f"site:linkedin.com/in {' '.join(tokens)} ({roles})"
+        self._salesql_searches += 1
+        geography = list(self.config.icp.geography or [])
+        resp = await self._fetch(
+            "https://google.serper.dev/search",
+            method="POST",
+            json_body={"q": query, "num": SERPER_MAX_NUM, **serper_locale(*geography)},
+            headers={"X-API-KEY": self.env.serper_api_key, "Content-Type": "application/json"},
+            retries=2,
+        )
+        if resp is None:
+            return []
+        try:
+            data = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            return []
+        urls = []
+        for item in (data.get("organic") or []) if isinstance(data, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            url = (item.get("link") or "").split("?")[0]
+            if "linkedin.com/in/" not in url:
+                continue
+            text = f"{item.get('title') or ''} {item.get('snippet') or ''}"
+            if salesql.mentions_company(text, company_name, domain) and url not in urls:
+                urls.append(url)
+        return urls
+
+    async def _contacts_via_salesql(
+        self, company_id: str, domain: str, company_name: str, industry: str,
+        signal_note: str = "",
+    ) -> list[Prospect]:
+        """The flow done by hand: search the company's buyer on LinkedIn (via
+        Google), look the profile up in SalesQL, keep a work email at the
+        company's own domain. Only someone who works there now is kept."""
+        if not await self._salesql_budget_left():
+            return []
+        try:
+            urls = await self._salesql_profiles(company_name, domain)
+        except Exception as e:
+            logger.debug(f"SalesQL search failed for {domain}: {e}")
+            return []
+
+        contacts: list[Prospect] = []
+        lookups = 0
+        for url in urls:
+            if lookups >= SALESQL_LOOKUPS_PER_COMPANY or len(contacts) >= MAX_CONTACTS_PER_COMPANY:
+                break
+            if await self.state.prospect_exists(linkedin_url=url):
+                continue
+            if await salesql.lookups_remaining(self.state) <= 0:
+                break
+            await salesql.record_lookup(self.state)
+            lookups += 1
+            try:
+                person = await salesql.enrich(url, self.env.salesql_api_key)
+            except salesql.SalesQLError as e:
+                logger.warning(f"Scout: SalesQL stopped for this cycle: {e}")
+                self._salesql_off = True
+                break
+            if not person or not salesql.works_at(person, domain, company_name):
+                continue
+            title = salesql.current_title(person)
+            if not (self._title_matches_icp(title) or _BUYER_TITLE.search(title or "")):
+                continue
+            email, status = salesql.company_email(person, domain)
+            if not email:
+                continue
+            prospect = Prospect(
+                first_name=str(person.get("first_name") or "").strip(),
+                last_name=str(person.get("last_name") or "").strip(),
+                email=email,
+                email_status=status,
+                email_verified=(status == "verified"),
+                phone=salesql.work_phone(person),
+                linkedin_url=url,
+                company=company_name,
+                company_id=company_id,
+                title=title,
+                seniority=self._infer_seniority(title),
+                industry=industry,
+                source="salesql",
+                source_url=url,
+                personalization_notes=signal_note,
+            )
+            if not prospect.is_valid() or await self._is_duplicate_prospect(prospect):
+                continue
+            self._remember_prospect(prospect)
+            contacts.append(prospect)
         return contacts
 
     async def _observe_likely_owner(self, company_id: str, member: dict):

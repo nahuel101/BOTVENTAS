@@ -26,6 +26,7 @@ import base64
 import logging
 import math
 import re
+import unicodedata
 from html import unescape
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -799,6 +800,28 @@ def _best(current: int | None, new) -> int | None:
     return new if current is None else min(current, new)
 
 
+# Google's country and language for a place, so "packaging Argentina" is
+# searched from google.com.ar in Spanish instead of from the US in English.
+SERPER_COUNTRIES = {
+    "argentina": ("ar", "es"), "uruguay": ("uy", "es"), "paraguay": ("py", "es"),
+    "chile": ("cl", "es"), "bolivia": ("bo", "es"), "peru": ("pe", "es"),
+    "colombia": ("co", "es"), "ecuador": ("ec", "es"), "venezuela": ("ve", "es"),
+    "mexico": ("mx", "es"), "espana": ("es", "es"), "spain": ("es", "es"),
+    "brasil": ("br", "pt"), "brazil": ("br", "pt"),
+}
+
+
+def serper_locale(*places: str) -> dict:
+    """{"gl": ..., "hl": ...} for the first place naming a known country, else {}."""
+    for place in places:
+        plain = "".join(c for c in unicodedata.normalize("NFKD", place or "")
+                        if not unicodedata.combining(c)).lower()
+        for country, (gl, hl) in SERPER_COUNTRIES.items():
+            if re.search(rf"\b{country}\b", plain):
+                return {"gl": gl, "hl": hl}
+    return {}
+
+
 class Serper(DiscoveryProvider):
     """Google search with the friendliest free tier and the best depth pricing.
 
@@ -829,7 +852,8 @@ class Serper(DiscoveryProvider):
                      "Content-Type": "application/json"},
             # Free accounts reject num > 10 (HTTP 400 "Query pattern not
             # allowed for free accounts"), verified 2026-10-26.
-            json={"q": query.keyword(), "num": max(1, min(query.depth, 10))},
+            json={"q": query.keyword(), "num": max(1, min(query.depth, 10)),
+                  **serper_locale(query.location)},
         )
         r.raise_for_status()
         data = r.json()

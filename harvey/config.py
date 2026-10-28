@@ -623,6 +623,7 @@ class EnvConfig(BaseModel):
     linkedin_password: str = ""
     hunter_api_key: str = ""
     serper_api_key: str = ""
+    salesql_api_key: str = ""
     scavio_api_key: str = ""
     tinyfish_api_key: str = ""
     reoon_api_key: str = ""
@@ -741,6 +742,7 @@ def load_env() -> EnvConfig:
         linkedin_password=os.getenv("LINKEDIN_PASSWORD", "").strip(),
         hunter_api_key=os.getenv("HUNTER_API_KEY", "").strip(),
         serper_api_key=os.getenv("SERPER_API_KEY", "").strip(),
+        salesql_api_key=os.getenv("SALESQL_API_KEY", "").strip(),
         scavio_api_key=os.getenv("SCAVIO_API_KEY", "").strip(),
         tinyfish_api_key=os.getenv("TINYFISH_API_KEY", "").strip(),
         reoon_api_key=os.getenv("REOON_API_KEY", "").strip(),
