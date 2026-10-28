@@ -328,6 +328,19 @@ remaining companies wait for the next cycle instead of being marked checked.
 Harvey never opens linkedin.com for this. Find the companies first with
 `harvey discover --provider serper`.
 
+### Importing an existing pipeline (`harvey import`)
+`harvey import <file.xlsx | folder of CSVs>` (`harvey/importer.py`) loads a
+sales sheet with tabs Cuentas, Contactos, Outreach, Respuestas and Exclusiones:
+companies, people (personal addresses dropped), what each outreach came to
+(bounced → lost + invalid, in progress → contacted, any reply/pause/referral →
+replied, approved but never sent → new; anything unknown → contacted, never a
+fresh start), and the names never to contact. Re-running it updates instead of
+duplicating. Customers, excluded accounts and accounts marked not a fit go to
+the **name exclusion list** (`harvey/exclusions.py`, stored in `settings`),
+which discovery, Scout and the Sender's last pre-send check all enforce; names
+match by whole words after dropping legal forms ("S.A.C.I.F."). Researched
+companies with nobody found yet stay open for Scout (SalesQL).
+
 ### Sub-Agents
 - **Scout**: Python does all web searching (DuckDuckGo → Bing → Google → Serper API) and email resolution (pattern-first: cache → scraped mailto → Hunter domain search → default, then verify one candidate via Reoon/ZeroBounce/Hunter/SMTP; catch-alls flagged `risky`). Claude only scores/personalizes found data. Scout also collects **buying signals**: tech stack detected on each company's site (HubSpot, Shopify, Intercom, ~35 tools — zero extra requests) and hiring signals from careers pages. Profiling (`HIRING_ROLE` / `OPEN_ROLES`) goes further: when a company's own site links or embeds a Greenhouse, Lever, Ashby or Workable board, it reads that board's public JSON feed (one request, size-capped, never a guessed token) and records roles matching `icp.hiring_signals` (falls back to `icp.titles`) with department, location, posting date and URL, plus the open-roles count (`harvey/collectors/ats.py`). A board with no matching role records `HIRING_ROLE` = 0, so closed roles stop being current. The `titles` fallback is weak (it lists who you email, not roles that signal buying), so suggest users set `hiring_signals`. With `pip install python-jobspy` (optional), a job-board strategy discovers companies actively hiring for roles in `icp.hiring_signals` (falls back to `icp.titles`) — the strongest in-market signal. Signals land in prospects' personalization notes and boost their score.
 - **Writer**: Generates 3-email sequences (Email 1 < 75 words, Email 2 < 75, Email 3 < 40). Strict ban list on AI patterns.
@@ -350,6 +363,7 @@ harvey setup                 # Re-run setup wizard
 harvey train <url>           # Train on a product website
 harvey status                # Pipeline summary
 harvey usage                 # Claude quota gauges + per-agent token usage (no dollar costs — subscription plans aren't billed per token)
+harvey import <xlsx|dir>     # Load an existing pipeline + exclusions from a sales sheet
 harvey export                # Deliverable prospects → sequencer-ready CSV (prospects.csv)
 harvey export --all          # Full raw list, no filters
 harvey gmail auth            # One-time Gmail OAuth (when provider: gmail)

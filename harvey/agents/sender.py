@@ -22,6 +22,7 @@ from harvey.config import (
     HarveyConfig, EnvConfig, cold_daily_cap, compliance_footer_lines, compliance_notice,
     compliance_of, live_do_not_contact, operator_timezone, send_window_of,
 )
+from harvey import exclusions
 from harvey.gate import autopilot_review, do_not_contact_match, pre_send_check
 from harvey.send_window import in_window, next_send_time, recipient_country, recipient_zone
 from harvey.integrations.instantly import InstantlyClient
@@ -758,6 +759,9 @@ class Sender:
         await sync_sending_mode(self.config, self.state)   # "Turn off autopilot" counts at once
         if prospect is None:
             return "failed", "prospect missing"
+        excluded = exclusions.match(prospect.company, await exclusions.load(self.state))
+        if excluded:
+            return "cancelled", f"company '{excluded}' is on the exclusion list"
         if item["kind"] == "sequence":
             # Stop-on-reply / opt-out: never continue a sequence after contact.
             if prospect.status in STOP_STATUSES:

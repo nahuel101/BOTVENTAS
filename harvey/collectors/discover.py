@@ -1750,6 +1750,8 @@ async def run_discovery(
     # re-reading it a few hundred times would turn a config lookup into I/O
     # inside the hot loop.
     do_not_contact = live_do_not_contact(config)
+    from harvey import exclusions
+    excluded_names = await exclusions.load(state)
 
     # Each business's base facts are written once per run; its ranks once per
     # (business, keyword), and again only if a repeat search ranks it better.
@@ -1810,7 +1812,8 @@ async def run_discovery(
                     # alone still lets one through discovery, where it costs
                     # credits to enrich and sits in every cohort until somebody
                     # notices it by eye.
-                    if do_not_contact_domain_match(biz.domain, do_not_contact):
+                    if do_not_contact_domain_match(biz.domain, do_not_contact) \
+                            or exclusions.match(biz.name, excluded_names):
                         report.excluded += 1
                         continue
                     ident = biz.identity()

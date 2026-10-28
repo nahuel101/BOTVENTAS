@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from harvey import exclusions
 from harvey.brain import Brain
 from harvey.collectors import people as people_mod
 from harvey.collectors.discover import serper_locale, site_name_from_html
@@ -1626,6 +1627,10 @@ Respond ONLY with the JSON array."""
     ) -> list[Prospect]:
         """SalesQL first when configured, then the team-page scrape →
         ICP-matched, email-resolved, deduped prospects."""
+        state = getattr(self, "state", None)
+        if state is not None and exclusions.match(company_name, await exclusions.load(state)):
+            logger.info(f"Scout: {company_name} is on the exclusion list; skipped.")
+            return []
         if self._salesql_ready():
             found = await self._contacts_via_salesql(
                 company_id, domain, company_name, industry, signal_note)

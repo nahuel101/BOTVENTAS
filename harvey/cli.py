@@ -426,6 +426,37 @@ def cmd_export(args):
     asyncio.run(_export())
 
 
+def cmd_import(args):
+    """Import an existing pipeline from a spreadsheet."""
+    from harvey.importer import import_workbook
+    from harvey.state import StateManager
+
+    async def _import():
+        state = StateManager()
+        await state.init_db()
+        report = await import_workbook(state, args.path)
+        print(f"\n  Imported {report.companies} companies and {report.prospects} contacts.")
+        labels = {"new": "not contacted yet", "contacted": "contacted, no reply",
+                  "replied": "replied (Harvey won't email them; follow up yourself)",
+                  "lost": "closed (bounced, no reply or discarded)"}
+        for status, count in sorted(report.statuses.items(), key=lambda kv: -kv[1]):
+            print(f"    {count:>5}  {labels.get(status, status)}")
+        print(f"  Never to contact: {report.excluded_names} customers/exclusions, "
+              f"{report.not_a_fit} companies that aren't a fit.")
+        if report.personal_emails_dropped:
+            print(f"  Personal addresses left out (never cold-emailed): "
+                  f"{report.personal_emails_dropped}")
+        print(f"  Researched companies with nobody found yet, left for Scout: "
+              f"{report.companies_left_for_prospecting}")
+        if report.referrals:
+            print(f"\n  Referrals in replies ({len(report.referrals)}), to follow up by hand:")
+            for line in report.referrals:
+                print(f"    - {line}")
+        print()
+
+    asyncio.run(_import())
+
+
 def cmd_gmail(args):
     """Gmail provider utilities (auth / test)."""
     from harvey.config import load_env
@@ -1019,6 +1050,12 @@ def main():
     sub.add_argument("--status", default="", help="Comma-separated pipeline statuses (e.g. new,queued); opted-out contacts stay excluded")
     sub.add_argument("--all", action="store_true", help="Export the raw list without filters, including opted-out contacts (not for outreach)")
     sub.set_defaults(func=cmd_export)
+
+    # harvey import <workbook>
+    sub = subparsers.add_parser(
+        "import", help="Import an existing pipeline (companies, contacts, outreach, exclusions) from a spreadsheet")
+    sub.add_argument("path", help="An .xlsx file, or a folder with one CSV per tab")
+    sub.set_defaults(func=cmd_import)
 
     # harvey gmail auth|test
     sub = subparsers.add_parser("gmail", help="Gmail provider setup")
