@@ -1064,6 +1064,24 @@ class OpenStreetMap(DiscoveryProvider):
         "attorney": ['office=lawyer'],
         "contractor": ['craft=builder', 'office=construction_company'],
         "landscap": ['craft=gardener', 'shop=garden_centre'],
+        # Businesses that buy folding-carton packaging (Spanish and English).
+        "panader": ['shop=bakery'],
+        "bakery": ['shop=bakery'],
+        "pasteler": ['shop=pastry'],
+        "pastry": ['shop=pastry'],
+        "chocolat": ['shop=chocolate', 'shop=confectionery'],
+        "confiter": ['shop=confectionery', 'shop=pastry'],
+        "golosin": ['shop=confectionery'],
+        "alfajor": ['shop=confectionery'],
+        "confection": ['shop=confectionery'],
+        "bodega": ['craft=winery'],
+        "winer": ['craft=winery'],
+        "cervec": ['craft=brewery'],
+        "brewer": ['craft=brewery'],
+        "cosmet": ['shop=cosmetics'],
+        "perfum": ['shop=perfumery'],
+        "tostader": ['craft=coffee_roaster'],
+        "coffee roast": ['craft=coffee_roaster'],
     }
 
     def _tags(self, term: str) -> list[str]:

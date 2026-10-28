@@ -10,6 +10,7 @@ sending domain while nobody's watching.
 import html
 import logging
 import re
+import unicodedata
 from datetime import datetime, timezone
 
 from harvey.brain import Brain, BrainUnavailable
@@ -71,15 +72,65 @@ OPT_OUT_PATTERNS = (
     "never contact",
     "delete my info",
     "delete my data",
+    # Spanish (Argentina). Matched with accents removed ("dejá" = "deja").
+    "dar de baja",
+    "darme de baja",
+    "denme de baja",
+    "deme de baja",
+    "dame de baja",
+    "dennos de baja",
+    "no me escriban",
+    "no me escribas",
+    "no me escriba",
+    "no nos escriban",
+    "no me vuelvan a escribir",
+    "no me vuelvas a escribir",
+    "no vuelvan a escribir",
+    "dejen de escribir",
+    "deja de escribir",
+    "deje de escribir",
+    "dejen de enviar",
+    "deja de enviar",
+    "deje de enviar",
+    "dejen de mandar",
+    "deja de mandar",
+    "no me contacten",
+    "no me contactes",
+    "no me contacte",
+    "no nos contacten",
+    "no quiero recibir",
+    "no deseo recibir",
+    "no queremos recibir",
+    # Not bare "sacame de": "sacame de una duda" asks a question.
+    "sacame de la lista",
+    "sacame de su lista",
+    "sacame de tu lista",
+    "sacame de sus listas",
+    "saquenme de la lista",
+    "saquenme de su lista",
+    "saquenme de sus listas",
+    "saqueme de la lista",
+    "saqueme de su lista",
+    "quitenme de la lista",
+    "quitenme de su lista",
+    "borren mis datos",
+    "borrar mis datos",
+    "eliminen mis datos",
+    "eliminar mis datos",
 )
 # "No thanks" (what cold email's footer asks for) as a phrase: not "no
 # Thanksgiving", "Bruno / Thanks," or "yes or no, thanks".
 # Checked one line at a time: "...the answer is no / Thanks!" is a sign-off.
 NO_THANKS_RE = re.compile(
     r"(?<!\bor )\bno,?[ \t]+thank(?:s|[ \t]+you)\b(?![ \t]+(?:needed|necessary|required))")
+# The Spanish opt-out line asks for "no, gracias": not "sí o no, gracias"
+# or "no gracias a ustedes".
+NO_GRACIAS_RE = re.compile(
+    r"(?<!\bo )\bno,?[ \t]+(?:muchas[ \t]+)?gracias\b(?![ \t]+a\b)")
 # A reply that says only this (signature aside) is an opt-out ("Reply STOP").
 BARE_OPT_OUTS = {"stop", "unsubscribe", "remove", "remove me", "opt out",
-                 "no thanks", "no thank you"}
+                 "no thanks", "no thank you",
+                 "baja", "de baja", "no gracias", "no muchas gracias"}
 _MOBILE_SIGNATURE_RE = re.compile(
     r"^[ \t]*(?:sent from my \w[^\n]*|get outlook for \w[^\n]*|sent from \w+ mail[^\n]*)$",
     re.IGNORECASE | re.MULTILINE)
@@ -143,6 +194,12 @@ class OurText:
         return "\n".join(kept)
 
 
+def _no_accents(text: str) -> str:
+    """Text without accents, so "dejá de escribir" matches "deja de escribir"."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text)
+                   if not unicodedata.combining(c))
+
+
 def _opt_out_reason(their_text: str, own_words: str) -> dict | None:
     """Which opt-out rule their reply trips, and on what words, or None.
 
@@ -150,17 +207,18 @@ def _opt_out_reason(their_text: str, own_words: str) -> dict | None:
     reply without the quote. Longer phrases match across a line wrap; "no
     thanks" only within a line. The result is kept with the opt-out so a
     human can see why Harvey stopped, and undo it if it was wrong."""
-    flat = _flat(their_text)
+    flat = _no_accents(_flat(their_text))
     for p in OPT_OUT_PATTERNS:
         if p in flat:
             return {"rule": "phrase", "matched": p,
                     "why": f'Their reply contains "{p}".'}
     for line in their_text.split("\n"):
-        m = NO_THANKS_RE.search(_flat(line))
+        line = _no_accents(_flat(line))
+        m = NO_THANKS_RE.search(line) or NO_GRACIAS_RE.search(line)
         if m:
             return {"rule": "no_thanks", "matched": m.group(0),
                     "why": f'Their reply says "{m.group(0)}", what the opt-out line asks for.'}
-    bare = _flat(_MOBILE_SIGNATURE_RE.sub("", own_words or ""))
+    bare = _no_accents(_flat(_MOBILE_SIGNATURE_RE.sub("", own_words or "")))
     bare = re.sub(r"[^\w\s-]", "", bare).strip()
     if bare in BARE_OPT_OUTS:
         return {"rule": "only_words", "matched": bare,
@@ -187,6 +245,27 @@ ESCALATION_PATTERNS = (
     "gdpr",
     "can-spam",
     "blacklist",
+    # Spanish (Argentina). Matched with accents removed.
+    "abogado",
+    "carta documento",
+    "accion legal",
+    "acciones legales",
+    "medidas legales",
+    # Not bare "demanda": in a sales thread it usually means market demand.
+    "demanda judicial",
+    "iniciar una demanda",
+    "demandarlos",
+    "los voy a demandar",
+    "denuncia",
+    "denunciar",
+    "acoso",
+    "hostigamiento",
+    "como spam",
+    "proteccion de datos",
+    "datos personales",
+    "25.326",
+    "aaip",
+    "defensa del consumidor",
 )
 
 
@@ -460,7 +539,7 @@ class Handler:
         # sent (our footer says "no thanks") is ours, not theirs.
         ours = await self._our_text(prospect)
         their_text = ours.remove(reply_text)
-        keyword_text = _flat(their_text)
+        keyword_text = _no_accents(_flat(their_text))
         stripped = strip_quoted_reply(reply_text) or reply_text
         reply_text = ours.remove(stripped).strip() or stripped
 

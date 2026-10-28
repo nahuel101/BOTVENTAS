@@ -32,7 +32,7 @@ def test_inbox_needs_an_address_and_named_people_still_need_names():
 
 def test_render_greets_an_inbox_as_there():
     sender = Sender.__new__(Sender)
-    assert sender._render("Hi {{first_name}}, {{company}}", inbox()) == "Hi there, Acme Roofing"
+    assert sender._render("Hola {{first_name}}, {{company}}", inbox()) == "Hola equipo, Acme Roofing"
     named = Prospect(first_name="Jo", last_name="Li", title="Owner", company="Acme")
     assert sender._render("Hi {{first_name}}", named) == "Hi Jo"
 

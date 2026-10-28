@@ -605,6 +605,8 @@ Extract the following and return as JSON:
   "tone": "describe the brand's communication tone in 3-4 words"
 }}
 
+Write every text value in Spanish as written in Argentina (español rioplatense).
+
 Be thorough — you have access to the full website. Extract everything relevant."""
 
         result = await self.brain.think_json(prompt, session_id="harvey-trainer")
@@ -655,6 +657,15 @@ produce ["Owner", "President", "CEO", "Founder", "Managing Partner"], a
 "physician" persona should produce ["Physician", "MD", "Doctor"], and so on.
 Prefer more titles over fewer; a missed real title costs a contact forever,
 an extra one costs nothing.
+
+Prospects are in Argentina unless the website clearly sells elsewhere: put
+"Argentina" (or Argentine provinces/cities, written with the country, e.g.
+"Córdoba, Argentina") in "geography". Write every text value in Spanish as
+written in Argentina. List "titles" as Argentine business cards show them
+("Dueño", "Socio Gerente", "Gerente General", "Gerente de Compras", "Jefe de
+Compras", "Responsable de Compras", "Gerente de Marketing", "Jefe de
+Producto"), plus the English forms some companies use ("CEO", "Owner",
+"Purchasing Manager").
 
 Be specific — don't guess generically. Base this on what the website actually says about their customers."""
 
@@ -876,7 +887,7 @@ What prospects do instead of buying a solution like ours:
                 "industries": icp_info.get("industries", ["Technology"]),
                 "company_size": icp_info.get("company_size", "10-200 employees"),
                 "titles": icp_info.get("titles", ["VP", "Director"]),
-                "geography": icp_info.get("geography", ["United States"]),
+                "geography": icp_info.get("geography", ["Argentina"]),
             },
             "channels": {
                 "email": {
@@ -898,7 +909,7 @@ What prospects do instead of buying a solution like ours:
                 "quiet_hours": {
                     "start": "22:00",
                     "end": "07:00",
-                    "timezone": "America/New_York",
+                    "timezone": "America/Argentina/Buenos_Aires",
                 },
             },
             "brain": brain_section(self.brain_config),

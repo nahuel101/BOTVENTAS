@@ -376,9 +376,12 @@ DEFAULT_OPT_OUT_LINE = 'Not interested? Reply "no thanks" and I won\'t email aga
 # The replies the Handler always honours as an opt-out on their own; an
 # opt_out_line must ask for one of them ("Reply STOP", 'reply "no thanks"').
 OPT_OUT_WORDS = ("no thanks", "no thank you", "unsubscribe", "stop", "remove me",
-                 "opt out")
+                 "opt out", "no, gracias", "no gracias", "baja")
 _ASKS_FOR_OPT_OUT_RE = re.compile(
-    r"\breply(?:\s+with)?\s*[\"'\u201c\u2018]?\s*(?:"
+    # "respond\S{0,2}": respondé / responda / respondan, and a "respondé"
+    # whose é was mangled by a config saved in a Windows encoding.
+    r"\b(?:reply|respond\S{0,2})(?:\s+with|\s+con)?"
+    r"\s*[\"'\u201c\u2018]?\s*(?:"
     + "|".join(re.escape(w) for w in OPT_OUT_WORDS) + r")\b", re.IGNORECASE)
 
 

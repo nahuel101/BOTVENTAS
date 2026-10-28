@@ -25,6 +25,14 @@ BANNED_PHRASES = (
     "cutting-edge solution", "revolutionize your", "unlock your",
     "supercharge your", "as an ai", "i'm an ai", "i am an ai",
     "as a language model",
+    # Spanish (Argentina)
+    "hacé clic", "hace clic aquí", "haga clic", "haz clic", "clic acá", "clic aquí",
+    "clic aca", "clic aqui", "hacé click", "haga click", "click acá", "click aquí",
+    "oferta exclusiva", "oferta especial", "por tiempo limitado", "100% gratis",
+    "resultados garantizados", "comprá ya", "compre ya", "última oportunidad",
+    "espero que te encuentres bien", "espero que se encuentre bien",
+    "espero que este mail te encuentre", "espero que este correo",
+    "como modelo de lenguaje", "soy una inteligencia artificial",
 )
 
 MAX_SUBJECT_LEN = 90

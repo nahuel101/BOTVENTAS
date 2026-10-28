@@ -27,6 +27,7 @@ Personalization rules:
 - Mention anything specific about their role or company that could hook them
 - Never fabricate details you don't have. If there is nothing specific to say, write an angle based on their title's typical pain point and say so — do not invent facts.
 - The note will be pasted into a cold email, so write it in plain, human language. No marketing speak.
+- Write each note in Spanish as written in Argentina (español rioplatense, "vos"), since the email it goes into is in Spanish.
 
 Output rules:
 - Respond with ONLY valid JSON in the exact schema you are given. No markdown fences, no commentary, no trailing text.

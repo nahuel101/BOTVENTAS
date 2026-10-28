@@ -4,7 +4,7 @@ persona:
   role: "Business Development"
   email: "harvey@yourcompany.com"
   linkedin: "linkedin.com/in/harvey-yourcompany"
-  tone: "professional, consultative, confident"
+  tone: "profesional, cercano, directo"
 
 product:
   name: "Your Product"
@@ -38,7 +38,7 @@ icp:
     - "CMO"
     - "Director of Marketing"
   geography:
-    - "United States"
+    - "Argentina"
   # Roles that signal a company is in-market RIGHT NOW (a company hiring a
   # "Head of Growth" is shopping for growth tooling). Used for careers-page
   # scanning and job-board discovery. Empty = fall back to titles above.
@@ -91,7 +91,7 @@ usage:
   quiet_hours:
     start: "22:00"
     end: "07:00"
-    timezone: "America/New_York"
+    timezone: "America/Argentina/Buenos_Aires"
 
 # Optional: check each new recipient with Precleared (precleared.dev) before
 # the first cold email: may cold marketing email go to this address under UK
@@ -108,7 +108,7 @@ compliance:
   # mailbox. Until it's set, cold email still sends, with a warning.
   postal_address: ""
   # Keep wording Harvey recognises as an opt-out ("no thanks", "unsubscribe").
-  opt_out_line: 'Not interested? Reply "no thanks" and I won''t email again.'
+  opt_out_line: '¿No te interesa? Respondé "no, gracias" y no te escribo más.'
   # Never email these, cold or in reply: competitors, your existing customers,
   # anyone under a legal hold. An entry is an address or a domain, and a domain
   # covers its subdomains ("acme.example" also blocks "mail.acme.example", but
@@ -123,7 +123,7 @@ compliance:
     enabled: false
     sender_country: ""          # GB or US: where your business is based
     address_source: "unknown"   # published | bought | scraped | given | unknown
-    prospect_country: ""        # optional, e.g. US if all your prospects are in one country
+    prospect_country: "AR"      # optional, e.g. US if all your prospects are in one country
     # Harvey also tells Precleared the recipient's country when the company's
     # location makes it certain, and the company's and person's names when
     # it has them (see docs/precleared.md).
