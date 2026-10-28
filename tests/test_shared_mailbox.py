@@ -5,6 +5,7 @@ sent mail is filed in Sent, and only bounces of Harvey's own emails count
 toward the kill switch. Fictional data only.
 """
 
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 from types import SimpleNamespace
 
@@ -69,17 +70,52 @@ def imap(monkeypatch):
     return server
 
 
-def _provider():
+def _provider(tmp_path=None):
     env = SimpleNamespace(smtp_host="mail.acme.example", smtp_port=587, smtp_username="ana@acme.example",
                           smtp_password="x", imap_host="", imap_port=993, imap_username="",
                           imap_password="")
     config = SimpleNamespace(persona=SimpleNamespace(name="Ana", email="ana@acme.example"))
-    return SmtpImapProvider(config, env)
+    provider = SmtpImapProvider(config, env)
+    if tmp_path is not None:
+        provider.last_read_file = tmp_path / "last_read.txt"
+    return provider
 
 
-def test_reading_never_marks_mail_read_and_finds_opened_replies(imap):
+def _since(imap):
+    search = next(c for c in imap.commands if c[0] == "SEARCH")
+    return datetime.strptime(search[search.index("SINCE") + 1], "%d-%b-%Y")
+
+
+def test_reads_back_to_the_last_handled_read_after_a_week_off(imap, tmp_path):
+    provider = _provider(tmp_path)
+    provider._fetch_unseen(50)
+    # First run: the default lookback.
+    assert (datetime.now() - _since(imap)).days in (3, 4)
+    provider.confirm_read()
+
+    # Off for nine days: the next read reaches back to the last one.
+    week_ago = datetime.now() - timedelta(days=9)
+    provider.last_read_file.write_text(week_ago.isoformat())
+    imap.commands.clear()
+    _provider(tmp_path)._fetch_unseen(50)
+    assert _since(imap).date() == (week_ago - timedelta(days=1)).date()
+
+
+def test_the_marker_only_moves_when_everything_was_read(imap, tmp_path):
+    imap.inbox = {str(i).encode(): _raw(f"p{i}@x.example", "Re", "hola", f"<{i}@x>")
+                  for i in range(10, 13)}
+    provider = _provider(tmp_path)
+    provider._fetch_unseen(2)          # three new, two read: the rest next time
+    provider.confirm_read()
+    assert not provider.last_read_file.exists()
+    provider._fetch_unseen(2)
+    provider.confirm_read()
+    assert provider.last_read_file.exists()
+
+
+def test_reading_never_marks_mail_read_and_finds_opened_replies(imap, tmp_path):
     imap.inbox = {b"10": _raw("eva@cliente.example", "Re: estuches", "Me interesa.", "<r1@x>")}
-    provider = _provider()
+    provider = _provider(tmp_path)
 
     first = provider._fetch_unseen(50)
 

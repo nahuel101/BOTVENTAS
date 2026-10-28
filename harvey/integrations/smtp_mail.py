@@ -13,10 +13,12 @@ Sends as the configured persona (name + email), and files a copy of each
 sent email in the mailbox's Sent folder (IMAP_SENT_FOLDER, or the folder
 the server marks \\Sent), so the team sees it like any other email.
 
-Reading never changes the mailbox: it looks at the last few days of the
-inbox (IMAP_LOOKBACK_DAYS, 3 by default) without marking anything read, so
-it works on a mailbox people use every day. A reply someone already opened
-is still seen; the Handler skips what it has handled before.
+Reading never changes the mailbox: it looks at the inbox since the last
+read Harvey finished (a day of overlap), or the last IMAP_LOOKBACK_DAYS (3)
+the first time, without marking anything read, so it works on a mailbox
+people use every day. A computer that was off for a week still catches up
+on that week. A reply someone already opened is still seen; the Handler
+skips what it has handled before.
 """
 
 import asyncio
@@ -33,6 +35,7 @@ from email.utils import make_msgid, parseaddr
 
 import aiosmtplib
 
+from harvey.paths import PROJECT_ROOT
 from harvey.integrations.mail_provider import (
     InboundMessage,
     MailProvider,
@@ -41,6 +44,10 @@ from harvey.integrations.mail_provider import (
 )
 
 logger = logging.getLogger("harvey.smtp")
+
+# When the last fully handled read started, so the next one reaches back to
+# it however long Harvey was off.
+LAST_READ_FILE = PROJECT_ROOT / "data" / "imap_last_read.txt"
 
 DEFAULT_LOOKBACK_DAYS = 3
 # Folder names servers use for sent mail when they don't flag one \Sent.
@@ -70,6 +77,8 @@ class SmtpImapProvider(MailProvider):
         # UIDs already returned by this process: each poll fetches only new mail.
         self._seen_uids: set[bytes] = set()
         self._uidvalidity = b""
+        self.last_read_file = LAST_READ_FILE
+        self._pending_read: datetime | None = None
 
     def is_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_user and self.smtp_pass)
@@ -180,11 +189,19 @@ class SmtpImapProvider(MailProvider):
                 pass
             if validity != self._uidvalidity:
                 self._seen_uids, self._uidvalidity = set(), validity
-            since = (datetime.now(timezone.utc) - timedelta(days=self.lookback_days)).strftime("%d-%b-%Y")
-            status, data = conn.uid("SEARCH", None, "SINCE", since)
-            if status != "OK" or not data or not data[0]:
+            started = datetime.now(timezone.utc).replace(tzinfo=None)
+            since = started - timedelta(days=self.lookback_days)
+            last = self._last_read()
+            if last is not None:
+                since = min(since, last - timedelta(days=1))
+            status, data = conn.uid("SEARCH", None, "SINCE", since.strftime("%d-%b-%Y"))
+            if status != "OK":
                 return []
-            new = [u for u in data[0].split() if u not in self._seen_uids][:limit]
+            uids = data[0].split() if data and data[0] else []
+            new = [u for u in uids if u not in self._seen_uids]
+            # Only a read that got everything may move the marker forward.
+            self._pending_read = started if len(new) <= limit else None
+            new = new[:limit]
             for uid in new:
                 self._seen_uids.add(uid)
                 status, parts = conn.uid("FETCH", uid, "(BODY.PEEK[])")
@@ -200,6 +217,24 @@ class SmtpImapProvider(MailProvider):
             except Exception:
                 pass
         return out
+
+    def _last_read(self) -> datetime | None:
+        try:
+            return datetime.fromisoformat(self.last_read_file.read_text().strip())
+        except (OSError, ValueError):
+            return None
+
+    def confirm_read(self) -> None:
+        """Everything the last read returned was handled: the next read can
+        start from it (with a day's overlap)."""
+        if self._pending_read is None:
+            return
+        try:
+            self.last_read_file.parent.mkdir(parents=True, exist_ok=True)
+            self.last_read_file.write_text(self._pending_read.isoformat())
+        except OSError as e:
+            logger.warning(f"Couldn't save the last-read time: {e}")
+        self._pending_read = None
 
     @staticmethod
     def _parse_rfc822(raw: bytes) -> InboundMessage | None:
