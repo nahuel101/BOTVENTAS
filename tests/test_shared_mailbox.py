@@ -95,7 +95,7 @@ def test_reads_back_to_the_last_handled_read_after_a_week_off(imap, tmp_path):
 
     # Off for nine days: the next read reaches back to the last one.
     week_ago = datetime.now() - timedelta(days=9)
-    provider.last_read_file.write_text(week_ago.isoformat())
+    provider.last_read_file.write_text(week_ago.isoformat(), encoding="utf-8")
     imap.commands.clear()
     _provider(tmp_path)._fetch_unseen(50)
     assert _since(imap).date() == (week_ago - timedelta(days=1)).date()

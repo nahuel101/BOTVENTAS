@@ -20,8 +20,12 @@ from tests.test_writer_feedback import RecordingBrain, config, state  # noqa: F4
 from tests.test_importer import TABS, _write_csv_folder
 
 
+# One "now" for the whole test run: two calls a second apart would disagree.
+_NOW = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
 def _days_ago(n):
-    return (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=n)).replace(microsecond=0)
+    return _NOW - timedelta(days=n)
 
 
 def _writer(brain, state):

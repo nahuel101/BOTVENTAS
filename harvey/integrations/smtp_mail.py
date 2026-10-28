@@ -220,7 +220,7 @@ class SmtpImapProvider(MailProvider):
 
     def _last_read(self) -> datetime | None:
         try:
-            return datetime.fromisoformat(self.last_read_file.read_text().strip())
+            return datetime.fromisoformat(self.last_read_file.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             return None
 
@@ -231,7 +231,7 @@ class SmtpImapProvider(MailProvider):
             return
         try:
             self.last_read_file.parent.mkdir(parents=True, exist_ok=True)
-            self.last_read_file.write_text(self._pending_read.isoformat())
+            self.last_read_file.write_text(self._pending_read.isoformat(), encoding="utf-8")
         except OSError as e:
             logger.warning(f"Couldn't save the last-read time: {e}")
         self._pending_read = None
